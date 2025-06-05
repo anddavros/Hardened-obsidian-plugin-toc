@@ -1,3 +1,30 @@
+# 0.3.0 (Thu Jun 05 2025)
+
+#### 🚀 Enhancement
+
+Security
+	•	Escaped link labels to neutralise <, >, ", ', ` and strip zero-width chars → prevents XSS when notes are exported/rendered.
+	•	Hardened slug generator (safeSlug) – NFC normalisation, removal of .., /, \, zero-width chars; thwarts anchor-collision and path-traversal tricks.
+
+Performance / Stability
+	•	Compiled the heavy emoji RegExp once at module load to avoid repeated recompilation.
+	•	Added idle-chunk processing and MAX_HEADINGS guard (default = 1 000) to prevent UI freezes on very large documents.
+
+Settings
+	•	New slider: “Abort if headings exceed …” (100 – 5 000).
+	•	Settings are now deep-cloned on load to isolate them from runtime mutation by other plugins.
+
+Behaviour
+	•	Optional GitHub-compatible anchors retained; now applied on top of hardened slugs.
+	•	No visual or functional regressions expected for normal vaults.
+
+Upgrade Notes
+	•	Drop‐in replacement for previous main.js; TypeScript users should rebuild.
+	•	Review the new Max headings default if your vault routinely exceeds 1 000 headings per note.
+
+(Internal reference: mitigates security issues #1–#5 and perf issue #3 from the 2025-06-05 audit.)
+
+
 # 0.2.0 (Thu May 11 2023)
 
 #### 🚀 Enhancement
