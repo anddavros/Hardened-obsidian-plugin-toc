@@ -1,4 +1,6 @@
-# obsidian-plugin-toc
+# hardened-obsidian-plugin-toc
+
+This is a hardened version of the obsidian-plugin-toc, credit goes to @hipstersmoothie for the project source.
 
 Create a table of contents for a note.
 
