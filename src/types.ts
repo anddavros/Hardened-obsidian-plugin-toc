@@ -1,5 +1,5 @@
 export interface TableOfContentsPluginSettings {
-listStyle: “bullet” | “number”;
+listStyle: "bullet" | "number";
 minimumDepth: number;
 maximumDepth: number;
 title?: string;

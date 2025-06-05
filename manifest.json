@@ -1,10 +1,10 @@
 {
-“id”: “obsidian-plugin-toc”,
-“name”: “Table of Contents (Hardened)”,
-“author”: “Andrew Lisowski (Hardened by anddavros)”,
-“authorUrl”: “https://github.com/anddavros/Hardened-obsidian-plugin-toc”,
-“description”: “Create a secure, high-performance table of contents for a note with XSS protection and performance safeguards.”,
-“isDesktopOnly”: false,
-“minAppVersion”: “0.10.12”,
-“version”: “0.3.0”
-}
+    "id": "obsidian-plugin-toc",
+    "name": "Table of Contents (Hardened)",
+    "author": "Andrew Lisowski (Hardened by anddavros)",
+    "authorUrl": "https://github.com/anddavros/Hardened-obsidian-plugin-toc",
+    "description": "Create a secure, high-performance table of contents for a note with XSS protection and performance safeguards.",
+    "isDesktopOnly": false,
+    "minAppVersion": "0.10.12",
+    "version": "0.3.0"
+  }
