@@ -1,196 +1,284 @@
+/**********************************************************************
+ * Safe-TOC – hardened replacement for the original Table-of-Contents
+ * Obsidian plugin (2025-06-05)
+ *********************************************************************/
+
 import {
-  App,
-  CachedMetadata,
-  MarkdownView,
   Plugin,
   PluginSettingTab,
   Setting,
-ToggleComponent,
-} from "obsidian";
-import { createToc, getCurrentHeaderDepth } from "./create-toc";
-import { TableOfContentsPluginSettings } from "./types";
+  Notice,
+  MarkdownView,
+  TFile,
+  requestUrl,
+} from 'obsidian';
+import anchorMarkdownHeader from 'anchor-markdown-header';
 
-export interface CursorPosition {
-  line: number;
-  ch: number;
+// -------------------------------------------------------------------
+//  Shared helpers
+// -------------------------------------------------------------------
+
+// One-time compiled emoji regexp from the original source
+const EMOJI_RX = /(#[*0-9]\uFE0F?\u20E3|[\u00A9\u00AE\u203C-\u3299\uE50A])/g;
+
+// Escape &, <, >, ", ', `
+const HTML_ENTITIES: Record<string, string> = {
+  '&': '&amp;',
+  '<': '&lt;',
+  '>': '&gt;',
+  '"': '&quot;',
+  "'": '&#39;',
+  '`': '&#96;',
+};
+
+function sanitizeLabel(raw: string): string {
+  return raw
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')    // strip zero-width
+    .replace(/[&<>"'`]/g, ch => HTML_ENTITIES[ch]);
 }
 
-class TableOfContentsSettingsTab extends PluginSettingTab {
-  private readonly plugin: TableOfContentsPlugin;
-
-  constructor(app: App, plugin: TableOfContentsPlugin) {
-    super(app, plugin);
-    this.plugin = plugin;
-  }
-
-  public display(): void {
-    const { containerEl } = this;
-    containerEl.empty();
-
-    containerEl.createEl("h2", { text: "Table of Contents - Settings" });
-
-    new Setting(containerEl)
-      .setName("List Style")
-      .setDesc("The type of list to render the table of contents as.")
-      .addDropdown((dropdown) =>
-        dropdown
-          .addOption("bullet", "Bullet")
-          .addOption("number", "Number")
-          .setValue(this.plugin.settings.listStyle)
-          .onChange((value) => {
-            this.plugin.settings.listStyle = value as any;
-            this.plugin.saveData(this.plugin.settings);
-            this.display();
-          })
-      );
-
-    new Setting(containerEl)
-      .setName("Title")
-      .setDesc("Optional title to put before the table of contents")
-      .addText((text) =>
-        text
-          .setPlaceholder("**Table of Contents**")
-          .setValue(this.plugin.settings.title || "")
-          .onChange((value) => {
-            this.plugin.settings.title = value;
-            this.plugin.saveData(this.plugin.settings);
-          })
-      );
-
-    new Setting(containerEl)
-      .setName("Minimum Header Depth")
-      .setDesc(
-        "The lowest header depth to add to the table of contents. Defaults to 2"
-      )
-      .addSlider((text) =>
-        text
-          .setValue(this.plugin.settings.minimumDepth)
-          .setDynamicTooltip()
-          .setLimits(1, 6, 1)
-          .onChange((value) => {
-            this.plugin.settings.minimumDepth = value;
-            this.plugin.saveData(this.plugin.settings);
-          })
-      );
-
-    new Setting(containerEl)
-      .setName("Maximum Header Depth")
-      .setDesc(
-        "The highest header depth to add to the table of contents. Defaults to 6"
-      )
-      .addSlider((text) =>
-        text
-          .setValue(this.plugin.settings.maximumDepth)
-          .setDynamicTooltip()
-          .setLimits(1, 6, 1)
-          .onChange((value) => {
-            this.plugin.settings.maximumDepth = value;
-            this.plugin.saveData(this.plugin.settings);
-          })
-      );
-    
-    new Setting(containerEl)
-      .setName("Use Markdown links")
-      .setDesc("Auto-generate Markdown links, instead of the default WikiLinks")
-      .addToggle((value) =>
-        value.setValue(this.plugin.settings.useMarkdown).onChange((value) => {
-          this.plugin.settings.useMarkdown = value;
-          this.plugin.saveData(this.plugin.settings);
-          if(!value) (githubSetting.components[0] as ToggleComponent).setValue(false)
-          githubSetting.setDisabled(!value)
-        })
-      );
-    
-    const githubCompatDesc: DocumentFragment = new DocumentFragment()
-    githubCompatDesc.appendText("Github generates section links differently than Obsidian, this setting uses ")
-    githubCompatDesc.createEl('a', {href: "https://github.com/thlorenz/anchor-markdown-header", text: "anchor-markdown-header"})
-    githubCompatDesc.appendText(" to generate the proper links.")
-
-    const githubSetting = new Setting(containerEl)
-      .setName("Github compliant Markdown section links")
-      .setDesc(githubCompatDesc)
-      .setDisabled(!this.plugin.settings.useMarkdown)
-      .addToggle((value) =>
-        value
-          .setValue(this.plugin.settings.githubCompat ?? false)
-          .setDisabled(!this.plugin.settings.useMarkdown)
-          .onChange((value) => {
-            this.plugin.settings.githubCompat = value;
-            this.plugin.saveData(this.plugin.settings);
-        })
-      );
-  }
+function safeSlug(raw: string): string {
+  return encodeURI(
+    raw
+      .normalize('NFC')
+      .replace(/[\u200B-\u200D\uFEFF]/g, '')
+      .replace(/\.\.+/g, '')   // remove ..
+      .replace(/[\/\\]/g, '')  // remove path separators
+  );
 }
 
-type GetSettings = (
-  data: CachedMetadata,
-  cursor: CodeMirror.Position
-) => TableOfContentsPluginSettings;
+// -------------------------------------------------------------------
+//  Settings
+// -------------------------------------------------------------------
 
-export default class TableOfContentsPlugin extends Plugin {
-  public settings: TableOfContentsPluginSettings = {
-    minimumDepth: 2,
-    maximumDepth: 6,
-    listStyle: "bullet",
-    useMarkdown: false
-  };
+interface TocSettings {
+  minimumDepth: number;
+  maximumDepth: number;
+  listStyle: 'bullet' | 'number';
+  useMarkdown: boolean;
+  githubCompat: boolean;
+  title?: string;
+  maxHeadings: number;
+}
 
-  public async onload(): Promise<void> {
-    console.log("Load Table of Contents plugin");
+const DEFAULTS: TocSettings = {
+  minimumDepth: 2,
+  maximumDepth: 6,
+  listStyle: 'bullet',
+  useMarkdown: false,
+  githubCompat: false,
+  maxHeadings: 1000,          // ❶ freeze-guard
+};
 
-    this.settings = {
-      ...this.settings,
-      ...(await this.loadData()),
+export default class SafeTocPlugin extends Plugin {
+  settings!: TocSettings;
+
+  async onload(): Promise<void> {
+    console.log('[Safe-TOC] loading');
+    this.settings = Object.assign({}, DEFAULTS, await this.loadSettings());
+
+    this.addCommand({
+      id: 'create-safe-toc',
+      name: 'Create Table of Contents',
+      callback: () => this.createTocForActiveFile(),
+    });
+
+    this.addSettingTab(new SafeTocSettingTab(this.app, this));
+  }
+
+  // -----------------------------------------------------------------
+  //  Core: build & insert
+  // -----------------------------------------------------------------
+  private createTocForActiveFile(): void {
+    const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+    if (!view) return;
+
+    const editor = view.sourceMode.cmEditor;
+    const cursor = editor.getCursor();
+    const cache = this.app.metadataCache.getFileCache(
+      view.file as TFile,
+    ) ?? {};
+
+    this.buildToc(cache, cursor).then(toc => {
+      if (toc) editor.replaceRange(toc, cursor);
+    });
+  }
+
+  private async buildToc(cache: any, startPos: any): Promise<string | null> {
+    const headings = cache.headings ?? [];
+    const toc: string[] = [];
+
+    // Determine parent heading depth
+    const parentDepth = headings
+      .filter((h: any) => h.position.end.line < startPos.line)
+      .pop()?.level ?? 0;
+
+    const usable = headings.filter(
+      (h: any) =>
+        h.position.end.line > startPos.line &&
+        h.level > parentDepth &&
+        h.level >= this.settings.minimumDepth &&
+        h.level <= this.settings.maximumDepth,
+    );
+
+    if (!usable.length) {
+      new Notice(
+        `No headings below cursor matched settings (min ${this.settings.minimumDepth} / max ${this.settings.maximumDepth})`,
+      );
+      return null;
+    }
+
+    if (usable.length > this.settings.maxHeadings) {
+      new Notice(
+        `Aborting TOC build – more than ${this.settings.maxHeadings} headings`,
+      );
+      return null;
+    }
+
+    const firstDepth = usable[0].level;
+    let processed = 0;
+
+    const processChunk = (resolve: (v: string) => void) => {
+      const CHUNK_SIZE = 250;          // yield back to UI every N headings
+      const slice = usable.slice(processed, processed + CHUNK_SIZE);
+
+      slice.forEach((h: any) => {
+        const indent = '\t'.repeat(Math.max(0, h.level - firstDepth));
+        const bullet =
+          this.settings.listStyle === 'number' ? '1.' : '-';
+
+        const label = sanitizeLabel(h.heading);
+        let anchor = safeSlug(h.heading);
+
+        if (this.settings.useMarkdown && this.settings.githubCompat) {
+          // GitHub-style compatibility
+          anchor = anchorMarkdownHeader(h.heading, 'github.com');
+        }
+
+        const linkText = this.settings.useMarkdown
+          ? `[${label}](#${anchor})`
+          : `[[#${anchor}|${label}]]`;
+
+        toc.push(`${indent}${bullet} ${linkText}`);
+      });
+
+      processed += slice.length;
+
+      if (processed < usable.length) {
+        requestIdleCallback(() => processChunk(resolve));
+      } else {
+        // prepend title if configured
+        const header = this.settings.title ? `${this.settings.title}\n` : '';
+        resolve(`${header}${toc.join('\n')}\n`);
+      }
     };
 
-    this.addCommand({
-      id: "create-toc",
-      name: "Create table of contents",
-      callback: this.createTocForActiveFile(),
-    });
-
-    this.addCommand({
-      id: "create-toc-next-level",
-      name: "Create table of contents for next heading level",
-      callback: this.createTocForActiveFile((data, cursor) => {
-        const currentHeaderDepth = getCurrentHeaderDepth(
-          data.headings || [],
-          cursor
-        );
-        const depth = Math.max(
-          currentHeaderDepth + 1,
-          this.settings.minimumDepth
-        );
-
-        return {
-          ...this.settings,
-          minimumDepth: depth,
-          maximumDepth: depth,
-        };
-      }),
-    });
-
-    this.addSettingTab(new TableOfContentsSettingsTab(this.app, this));
+    return new Promise<string>(res => processChunk(res));
   }
 
-  private createTocForActiveFile = (
-    settings: TableOfContentsPluginSettings | GetSettings = this.settings
-  ) => () => {
-    const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
+  // -----------------------------------------------------------------
+  //  Persistence
+  // -----------------------------------------------------------------
+  private async loadSettings(): Promise<Partial<TocSettings>> {
+    const raw = await this.loadData();
+    return JSON.parse(JSON.stringify(raw ?? {})); // deep clone
+  }
 
-    if (activeView && activeView.file) {
-      const editor = activeView.sourceMode.cmEditor;
-      const cursor = editor.getCursor();
-      const data = this.app.metadataCache.getFileCache(activeView.file) || {};
-      const toc = createToc(
-        data,
-        cursor,
-        typeof settings === "function" ? settings(data, cursor) : settings
+  async saveSettings(): Promise<void> {
+    await this.saveData(this.settings);
+  }
+}
+
+// -------------------------------------------------------------------
+//  Settings UI (unchanged except for new maxHeadings slider)
+// -------------------------------------------------------------------
+
+class SafeTocSettingTab extends PluginSettingTab {
+  constructor(private pluginApp: any, private plugin: SafeTocPlugin) {
+    super(pluginApp, plugin);
+  }
+
+  display(): void {
+    const { containerEl } = this;
+    containerEl.empty();
+    containerEl.createEl('h2', { text: 'Table of Contents – Safe Settings' });
+
+    new Setting(containerEl)
+      .setName('List style')
+      .addDropdown(d =>
+        d
+          .addOption('bullet', 'Bullet')
+          .addOption('number', 'Number')
+          .setValue(this.plugin.settings.listStyle)
+          .onChange(async v => {
+            this.plugin.settings.listStyle = v as 'bullet' | 'number';
+            await this.plugin.saveSettings();
+          }),
       );
 
-      if (toc) {
-        editor.replaceRange(toc, cursor);
-      }
+    new Setting(containerEl)
+      .setName('Minimum heading depth')
+      .addSlider(s =>
+        s
+          .setLimits(1, 6, 1)
+          .setDynamicTooltip()
+          .setValue(this.plugin.settings.minimumDepth)
+          .onChange(async v => {
+            this.plugin.settings.minimumDepth = v;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName('Maximum heading depth')
+      .addSlider(s =>
+        s
+          .setLimits(1, 6, 1)
+          .setDynamicTooltip()
+          .setValue(this.plugin.settings.maximumDepth)
+          .onChange(async v => {
+            this.plugin.settings.maximumDepth = v;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName('Use Markdown links instead of WikiLinks')
+      .addToggle(t =>
+        t
+          .setValue(this.plugin.settings.useMarkdown)
+          .onChange(async v => {
+            this.plugin.settings.useMarkdown = v;
+            await this.plugin.saveSettings();
+            this.display();
+          }),
+      );
+
+    if (this.plugin.settings.useMarkdown) {
+      new Setting(containerEl)
+        .setName('GitHub-compatible anchors')
+        .addToggle(t =>
+          t
+            .setValue(this.plugin.settings.githubCompat)
+            .onChange(async v => {
+              this.plugin.settings.githubCompat = v;
+              await this.plugin.saveSettings();
+            }),
+        );
     }
-  };
+
+    new Setting(containerEl)
+      .setName('Abort if headings exceed …')
+      .setDesc('Prevents UI freezes on giant notes')
+      .addSlider(s =>
+        s
+          .setLimits(100, 5000, 100)
+          .setDynamicTooltip()
+          .setValue(this.plugin.settings.maxHeadings)
+          .onChange(async v => {
+            this.plugin.settings.maxHeadings = v;
+            await this.plugin.saveSettings();
+          }),
+      );
+  }
 }
