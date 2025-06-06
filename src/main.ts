@@ -93,7 +93,7 @@ export default class SafeTocPlugin extends Plugin {
     const view = this.app.workspace.getActiveViewOfType(MarkdownView);
     if (!view) return;
 
-    const editor = view.sourceMode.cmEditor;
+    const editor = view.editor;
     const cursor = editor.getCursor();
     const cache = this.app.metadataCache.getFileCache(
       view.file as TFile,
@@ -148,11 +148,18 @@ export default class SafeTocPlugin extends Plugin {
           this.settings.listStyle === 'number' ? '1.' : '-';
 
         const label = sanitizeLabel(h.heading);
-        let anchor = safeSlug(h.heading);
+        let anchor: string;
 
-        if (this.settings.useMarkdown && this.settings.githubCompat) {
-          // GitHub-style compatibility
+        if (this.settings.useMarkdown) {
+          // For all Markdown links, use GitHub-style anchors (hyphens for spaces, lowercase)
           anchor = anchorMarkdownHeader(h.heading, 'github.com');
+        } else {
+          // For Wikilinks, use the heading directly after minimal cleaning for link syntax
+          // This preserves spaces, which Obsidian handles well for [[#Heading with spaces]]
+          anchor = h.heading
+            .normalize('NFC')
+            .replace(/[\u200B-\u200D\uFEFF]/g, '') // Strip zero-width characters
+            .replace(/[\\\[\]#^*|]/g, ''); // Remove characters that could break Obsidian link syntax (backslash added to list)
         }
 
         const linkText = this.settings.useMarkdown

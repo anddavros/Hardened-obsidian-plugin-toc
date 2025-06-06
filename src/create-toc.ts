@@ -84,8 +84,10 @@ export const createToc = (
 
     if (settings.useMarkdown && settings.githubCompat)
       return `${prefix} ${anchor(heading.heading)}`;
-    else if (settings.useMarkdown) 
-      linkText = encodeURI(heading.heading);
+    else if (settings.useMarkdown) {
+      // For Markdown links (non-GitHub compat), still use standard hyphenated anchors
+      linkText = anchor(heading.heading);
+    }
     else if (typeof previousLevelHeading == "undefined")
       linkText = heading.heading;
     else 
