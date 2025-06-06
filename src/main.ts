@@ -62,7 +62,7 @@ interface TocSettings {
 }
 
 const DEFAULTS: TocSettings = {
-  minimumDepth: 2,
+  minimumDepth: 1,
   maximumDepth: 6,
   listStyle: 'bullet',
   useMarkdown: false,

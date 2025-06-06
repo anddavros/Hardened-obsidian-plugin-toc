@@ -1,18 +1,24 @@
 {
   "compilerOptions": {
-    "baseUrl": ".",
-    "inlineSourceMap": true,
     "allowSyntheticDefaultImports": true,
-    "inlineSources": true,
-    "module": "ESNext",
-    "target": "es5",
-    "allowJs": true,
-    "noImplicitAny": true,
-    "moduleResolution": "node",
-    "importHelpers": true,
-    "lib": ["dom", "es5", "scripthost", "es2015"],
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "module": "commonjs",
+    "target": "es6",
+    "lib": [
+      "dom",
+      "es6"
+    ],
     "strict": true,
-    "types": ["./src/anchor.d.ts"]
+    "outDir": ".",
+    "rootDir": "src",
+    "inlineSources": true,
+    "sourceMap": true
   },
-  "include": ["**/*.ts"]
+  "include": [
+    "src/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules"
+  ]
 }
